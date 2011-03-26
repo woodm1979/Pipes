@@ -94,16 +94,35 @@ class PipeSegment(object):
         frozenset([0, 1, 2, 3]): 15,
     }
 
-    def __init__(self, seg_type, node):
+    def __init__(self, initial_connections, node):
         """
         Constructor for a pipe segment. seg_type can be:
         'end-cap', 'angle', 'straight', 'tee', or 'cross'.
         """
-        self.connections = list(self.initial_end_sets[seg_type])
-        self.cursor = random.randrange(len(self.connections))
+        for seg_type, connections in self.initial_end_sets.items():
+            #print 'seg_type = ' + repr(seg_type)
+            #print 'connections = ' + repr(connections)
+            if initial_connections in connections:
+                break
+        else:
+            raise ValueError('Invalid initial_connections: %r' % initial_connections)
+        self.connections = list(connections)
+        self.cursor = connections.index(initial_connections)
         self.node = node
         self.is_highlighted = False
         self.is_attached = False
+
+    def on_init(self):
+        """
+        Jumble the square such that it is random,
+        ...but different than initialized.
+        """
+        if self.is_set():
+            return
+
+        possible_cursors = range(len(self.connections))
+        possible_cursors.remove(self.cursor)
+        self.cursor = random.choice(possible_cursors)
 
     def rotate_right(self):
         self.cursor += 1
@@ -192,7 +211,6 @@ class PipeSegment(object):
         if dx == 1 and dy == 0:
             return 3 in self.connections[self.cursor]
 
-
     def delete_connection(self, bad_option):
         """Delete any connection that contains bad_option."""
         for connection in self.connections:
@@ -223,15 +241,15 @@ class PipeSegment(object):
 class PipesBoard(cevent.CEvent):
     """A class representing the game: Pipes!"""
 
-    def __init__(self, size):
+    def __init__(self, columns, rows=None):
         """
         Constructor for PipesBoard; size is either an int or pair of ints.
         """
-        try:
-            x = int(size)
-            y = int(size)
-        except TypeError:
-            x, y = size
+        x = int(columns)
+        y = x
+        if rows:
+            y = int(rows)
+
 
         self.xs = range(x)
         self.ys = range(y)
@@ -250,6 +268,8 @@ class PipesBoard(cevent.CEvent):
         self.screen = pygame.display.set_mode(size)
         PipeSegment.screen = self.screen
         self._is_running = True
+        for square in self.board.values():
+            square.on_init()
 
     def generate(self):
         """Generate a starting Pipes setup."""
@@ -263,17 +283,25 @@ class PipesBoard(cevent.CEvent):
                     graph.create_edge((x, y), (x, y - 1), random.random())
 
         graph = graph.min_span_tree()
+        for node, links in sorted(graph.nodes.items()):
+            #print 'node = ' + repr(node),
+            #print 'links = ' + repr(links.keys())
+            connections = []
+            sx, sy = node
+            for rx, ry in links:
+                if sx == rx and sy == ry + 1:
+                    connections.append(0)
+                elif sx == rx - 1 and sy == ry:
+                    connections.append(1)
+                elif sx == rx and sy == ry - 1:
+                    connections.append(2)
+                elif sx == rx + 1 and sy == ry:
+                    connections.append(3)
 
-        for node, links in graph.nodes.items():
-            if len(links) == 2:
-                node_a, node_b = links.keys()
-                if node_a[0] == node_b[0] or node_a[1] == node_b[1]:
-                    self.board[node] = PipeSegment('straight', node)
-                else:
-                    self.board[node] = PipeSegment('angle', node)
-            else:
-                segment_types = {1: 'end-cap', 3: 'tee', 4: 'cross'}
-                self.board[node] = PipeSegment(segment_types[len(links)], node)
+            #print 'connections = ' + repr(connections)
+
+            self.board[node] = PipeSegment(frozenset(connections), node)
+
         self.source = random.choice(self.board.keys())
 
     def __unicode__(self):
@@ -440,5 +468,5 @@ class PipesBoard(cevent.CEvent):
 
 if __name__ == '__main__':
 
-    pipes = PipesBoard(16)
+    pipes = PipesBoard(16, 16)
     pipes.on_execute()

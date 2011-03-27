@@ -2,6 +2,8 @@
 
 """This is a game for playing pipes. :-)"""
 
+import datetime
+import optparse
 import os
 import os.path
 import pygame
@@ -13,7 +15,7 @@ import graphlib
 import cevent
 
 
-PICS_DIR = 'pics'
+PICS_DIR = os.path.join('pics', 'pipes_3D')
 PIC_SIZE = 32
 
 
@@ -23,10 +25,7 @@ class PipeSegment(object):
     screen = None
 
     tiles = {}
-    for major in range(8):
-        for minor in range(16):
-            pic_file = os.path.join(PICS_DIR, '%03d_%03d.png' % (major, minor))
-            tiles[(major, minor)] = pygame.image.load(pic_file)
+
 
     initial_end_sets = {
         'end-cap': tuple(map(frozenset, [[0],
@@ -109,8 +108,21 @@ class PipeSegment(object):
         self.connections = list(connections)
         self.cursor = connections.index(initial_connections)
         self.node = node
+
+        self.set_tile_pics()
+
         self.is_highlighted = False
         self.is_attached = False
+
+    def set_tile_pics(self):
+        if self.tiles:
+            return
+
+        for major in range(8):
+            for minor in range(16):
+                pic_file = os.path.join(PICS_DIR, '%03d_%03d.png' % (major,
+                                                                     minor))
+                self.tiles[(major, minor)] = pygame.image.load(pic_file)
 
     def on_init(self):
         """
@@ -250,26 +262,34 @@ class PipesBoard(cevent.CEvent):
         if rows:
             y = int(rows)
 
-
         self.xs = range(x)
         self.ys = range(y)
 
         self.board = {}
         self.source = (0, 0)
 
+        self._no_clicky = False
         self._is_running = False
+        self.start_time = None
+        self.finish_time = None
 
     def on_init(self):
         """Creates the pygame board."""
+        text_height = 64
         self.generate()
         print unicode(self)
-        size = width, height = PIC_SIZE * len(self.xs), PIC_SIZE * len(self.ys)
+        width = PIC_SIZE * len(self.xs)
+        height = PIC_SIZE * len(self.ys)
+        height += text_height
+        size = width, height
         pygame.init()
         self.screen = pygame.display.set_mode(size)
         PipeSegment.screen = self.screen
         self._is_running = True
         for square in self.board.values():
             square.on_init()
+        self.font = pygame.font.Font(None, 40)
+        self.start_time = datetime.datetime.now()
 
     def generate(self):
         """Generate a starting Pipes setup."""
@@ -339,6 +359,8 @@ class PipesBoard(cevent.CEvent):
             self.on_mouse_move(event)
 
         elif event.type == pygame.MOUSEBUTTONUP:
+            if self._no_clicky:
+                return
             if event.button == 1:
                 self.on_lbutton_up(event)
             elif event.button == 2:
@@ -347,6 +369,8 @@ class PipesBoard(cevent.CEvent):
                 self.on_rbutton_up(event)
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
+            if self._no_clicky:
+                return
             if event.button == 1:
                 self.on_lbutton_down(event)
             elif event.button == 2:
@@ -359,7 +383,10 @@ class PipesBoard(cevent.CEvent):
 
     def _get_node(self, pos):
         x, y = pos
-        return (x / PIC_SIZE, y / PIC_SIZE)
+        node = (x / PIC_SIZE, y / PIC_SIZE)
+        if node not in self.board:
+            return None
+        return node
 
     def on_mouse_move(self, event):
         active_node = self._get_node(event.pos)
@@ -371,16 +398,21 @@ class PipesBoard(cevent.CEvent):
 
     def on_lbutton_down(self, event):
         node = self._get_node(event.pos)
+        if node is None:
+            return
         self.board[node].rotate_right()
 
     def on_rbutton_down(self, event):
         node = self._get_node(event.pos)
+        if node is None:
+            return
         self.board[node].rotate_left()
 
     #### Loop ####
     def on_loop(self):
         """Modifies the environment based on signals from events."""
         self.mark_attached()
+        self.is_complete()
 
     def mark_attached(self):
         for square in self.board.values():
@@ -402,6 +434,15 @@ class PipesBoard(cevent.CEvent):
                         attached_nodes.append(potential)
             square.is_attached = True
 
+    def is_complete(self):
+        for square in self.board.values():
+            if not square.is_attached:
+                return False
+        self._no_clicky = True
+        if self.finish_time is None:
+            self.finish_time = datetime.datetime.now()
+        return True
+
     #### Render ####
     def on_render(self):
         #self.screen.fill((1, 1, 1))
@@ -409,48 +450,35 @@ class PipesBoard(cevent.CEvent):
         for y in self.ys:
             for x in self.xs:
                 self.board[(x, y)].on_render()
+        if self._no_clicky:
+            self.display_win()
+        self.display_time()
         pygame.display.flip()
+
+    def display_win(self):
+        text = self.font.render("OMG Kittens!", True, (255, 255, 0))
+        text_rect = text.get_rect()
+        text_rect.centerx = self.screen.get_rect().centerx
+        text_rect.bottom = self.screen.get_rect().bottom - PIC_SIZE
+        self.screen.blit(text, text_rect)
+
+    def display_time(self):
+        if self.finish_time is None:
+            delta = datetime.datetime.now() - self.start_time
+        else:
+            delta = self.finish_time - self.start_time
+
+        text = str(delta.seconds) + ' sec'
+        text = self.font.render(text, True, (255, 255, 0))
+        text_rect = text.get_rect()
+        text_rect.centerx = self.screen.get_rect().centerx
+        text_rect.bottom = self.screen.get_rect().bottom
+        self.screen.blit(text, text_rect)
 
     #### Cleanup ####
     def on_cleanup(self):
         """Clean up the pygame board."""
         pygame.quit()
-
-    def neighbor_nodes(self, position, directions):
-        """Return the position and segment in the direction of position."""
-        if directions is None:
-            directions = set(0, 1, 2, 3)
-        # FIXME Here's where you start.
-
-    def solve(self):
-        """Attempt to solve the Pipes game."""
-
-        # clean up the edges.
-        self._solve_edges()
-
-        # Keep a queue of pieces to look at.
-        to_be_checked = set(position for position, segment
-                            in self.board.iteritems if segment.is_set())
-
-        while to_be_checked:
-            position = to_be_checked.pop()
-            segment = self.board[position]
-
-            bad_connections = segment.get_bad_connections
-            good_connections = segment.get_good_connections
-
-    def _solve_edges(self):
-        for position, segment in self.board:
-            print 'position = ' + repr(position)
-            print 'segment = ' + repr(segment)
-            if position[0] == self.xs[0]:
-                segment.delete_connection(3)
-            if position[1] == self.ys[0]:
-                segment.delete_connection(0)
-            if position[0] == self.xs[-1]:
-                segment.delete_connection(1)
-            if position[1] == self.ys[-1]:
-                segment.delete_connection(2)
 
     #### Main execution loop ####
     def on_execute(self):
@@ -466,7 +494,41 @@ class PipesBoard(cevent.CEvent):
         self.on_cleanup()
 
 
-if __name__ == '__main__':
-
-    pipes = PipesBoard(16, 16)
+def launch_board(columns=16, rows=None):
+    if rows is None:
+        rows = columns
+    pipes = PipesBoard(columns, rows)
     pipes.on_execute()
+
+
+def get_command_line_options():
+    global PICS_DIR
+
+    parser = optparse.OptionParser()
+    parser.add_option('-t', '--tile-directory', dest='tile_directory',
+                      help='The directory to find the tile-pngs in.',
+                      metavar='DIR', default=PICS_DIR)
+    parser.add_option('-r', '--rows', dest='rows',
+                      help='The number of rows on the pipes board.',
+                      metavar='NUM', default=None)
+    parser.add_option('-c', '--columns', dest='columns',
+                      help='The number of columns on the pipes board.',
+                      metavar='NUM', default=16)
+
+    opts, args = parser.parse_args()
+
+    if opts.rows is None:
+        opts.rows = opts.columns
+
+    PICS_DIR = opts.tile_directory
+
+    return opts, args
+
+
+def main():
+    opts, args = get_command_line_options()
+    launch_board(opts.columns, opts.rows)
+
+
+if __name__ == '__main__':
+    main()

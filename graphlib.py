@@ -183,8 +183,6 @@ class UndirectedGraph(DirectedGraph):
                        for node_a, value in self.nodes.items()
                        for node_b, weight in value.items())
 
-        print 'num_edges =', len(edges)
-
         # Walk the list of edges, small to large.
         for (weight, (node_a, node_b)) in edges:
             if sets[node_a] != sets[node_b]:

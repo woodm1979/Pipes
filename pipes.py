@@ -20,12 +20,16 @@ PIC_SIZE = 32
 
 
 class PipeSegment(object):
-    """A representation of a segfment on the Pipes board."""
+    """A representation of a segfmfent on the Pipes board."""
 
     screen = None
 
     tiles = {}
 
+    min_x = 0
+    min_y = 0
+    max_x = 0
+    max_y = 0
 
     initial_end_sets = {
         'end-cap': tuple(map(frozenset, [[0],
@@ -108,6 +112,11 @@ class PipeSegment(object):
         self.connections = list(connections)
         self.cursor = connections.index(initial_connections)
         self.node = node
+        x, y = node
+        self.min_x = min(self.min_x, x)
+        self.min_y = min(self.min_y, y)
+        self.max_x = max(self.max_x, x)
+        self.max_y = max(self.max_y, y)
 
         self.set_tile_pics()
 
@@ -174,8 +183,11 @@ class PipeSegment(object):
         Returns the tile's minor number, which determines which tile shape to
         use.
         """
-        minor = self.set_pic_nums[self.connections[self.cursor]]
+        minor = self.set_pic_nums[self.get_connection()]
         return minor
+
+    def get_connection(self):
+        return self.connections[self.cursor]
 
     def on_render(self):
         """Draws the square."""
@@ -189,15 +201,33 @@ class PipeSegment(object):
         """A unicode representation of a pipe segment."""
         return self.set_chars[self.connections[self.cursor]]
 
+    def clone(self):
+        new_copy = type(self)(self.get_connection(), self.node)
+        return new_copy
+
+    def get_neighbors(self):
+        """
+        Returns all nodes next to this node.
+        NOTE: This includes squares off the board.
+        """
+
+        x, y = self.node
+        neighbors = [
+            (x, y - 1),
+            (x + 1, y),
+            (x, y + 1),
+            (x - 1, y),
+        ]
+        return neighbors
+
     def get_possible_connected_nodes(self):
         """
         Returns all possible node-positions that could connect to this node.
-        NOTE: This can include nodes that don't really connect, and nodes that
-              are off the edge of the board.
+        NOTE: This includes squares off the board.
         """
         x, y = self.node
         connected_nodes = deque()
-        for direction in self.connections[self.cursor]:
+        for direction in self.get_connection():
             if direction == 0:
                 connected_nodes.append((x, y - 1))
             elif direction == 1:
@@ -208,46 +238,182 @@ class PipeSegment(object):
                 connected_nodes.append((x - 1, y))
         return connected_nodes
 
-    def is_connected_to(self, pos):
+    def get_links(self, pos):
         sx, sy = self.node
         rx, ry = pos
         dx = sx - rx
         dy = sy - ry
 
-        if dx == 0 and dy == 1:
-            return 0 in self.connections[self.cursor]
-        if dx == -1 and dy == 0:
-            return 1 in self.connections[self.cursor]
-        if dx == 0 and dy == -1:
-            return 2 in self.connections[self.cursor]
-        if dx == 1 and dy == 0:
-            return 3 in self.connections[self.cursor]
+        link_map = {
+            (0, 1): (0, 2),
+            (0, -1): (2, 0),
+            (1, 0): (3, 1),
+            (-1, 0): (1, 3),
+        }
+
+        return link_map.get((dx, dy))
+
+    def is_connected_to(self, pos):
+        my_link, his_link = self.get_links(pos)
+        return my_link in self.get_connection()
 
     def delete_connection(self, bad_option):
-        """Delete any connection that contains bad_option."""
-        for connection in self.connections:
+        """Delete any connectfion that contains bad_option."""
+        option = self.get_connection()
+        for connection in list(self.connections):
             if bad_option in connection:
-                self.connections -= bad_option
+                self.connections.remove(connection)
 
-    def require_connection(self, needed_option):
-        """Delete any connection that doesn't contain needed_option."""
-        for connection in self.connections:
-            if needed_option not in connection:
-                self.connections -= connection
+        self.cursor = 0
+        if option in self.connections:
+            self.cursor = self.connections.index(option)
 
-    def get_good_connections(self):
-        """Return any connection that's absolutely required by self."""
-        good_connections = set((0, 1, 2, 3))
-        for connection in self.connections:
-            good_connections &= connection
-        return good_connections
+    def is_a_nub(self):
+        """
+        Returns true if this square will only connect to one other square.
+        """
+        return len(self.get_connection()) == 1
 
-    def get_bad_connections(self):
-        """Return any connection that absolutely can not attach to self."""
-        bad_connections = set((0, 1, 2, 3))
-        for connection in self.connections:
-            bad_connections -= connection
-        return bad_connections
+    def learn_from_neighbor(self, n_square):
+        """Returns True if self is modified based on data within neighbor."""
+        old_connections = list(self.connections)
+        cursor_connection = self.get_connection()
+        my_link, his_link = self.get_links(n_square.node)
+        his_connections = n_square.connections
+
+        # Check positives first.
+        link_missing = False
+        for his_connection in his_connections:
+            link_missing |= (his_link not in his_connection)
+        if not link_missing:
+            # Our link MUST be used.
+            for my_connection in list(self.connections):
+                if my_link not in my_connection:
+                    self.connections.remove(my_connection)
+
+        # Check negatives next.
+        link_present = False
+        for his_connection in his_connections:
+            link_present |= (his_link in his_connection)
+        if not link_present or (self.is_a_nub() and n_square.is_a_nub()):
+            # Our link MUST NOT be used.
+            for my_connection in list(self.connections):
+                if my_link in my_connection:
+                    self.connections.remove(my_connection)
+
+
+        # If we didn't modify anything, we're done.
+        if self.connections == old_connections:
+            return False
+
+        # Make sure our cursor isn't pointing to nothing.
+        self.cursor = 0
+        if cursor_connection in self.connections:
+            self.cursor = self.connections.index(cursor_connection)
+        return True
+
+
+class Button(object):
+    screen = None
+
+    def __init__(self, call_back, node):
+        self.call_back = call_back
+        self.node = node
+
+    def press(self, *args, **kwargs):
+        self.call_back(*args, **kwargs)
+
+    def on_render(self):
+        """Draws the square."""
+        major = 2
+        minor = 0
+        tile = PipeSegment.tiles[(major, minor)]
+        x, y = self.node
+        self.screen.blit(tile, (PIC_SIZE * x, PIC_SIZE * y))
+
+    def handle_click(self, node):
+        if self._get_node(node) == self.node:
+            self.press()
+
+    def _get_node(self, pos):
+        x, y = pos
+        node = (x / PIC_SIZE, y / PIC_SIZE)
+        return node
+
+
+class Solver(object):
+    def __init__(self, board):
+        self.board = {}
+
+        self.min_x = 0
+        self.min_y = 0
+        self.max_x = 0
+        self.max_y = 0
+
+        for node, square in board.items():
+            self.board[node] = square.clone()
+            self.board[node].cursor = 0
+
+            x, y = node
+            self.min_x = min(self.min_x, x)
+            self.max_x = max(self.max_x, x)
+            self.min_y = min(self.min_y, y)
+            self.max_y = max(self.max_y, y)
+
+    def iter_solved(self):
+        for node in self.iter_altered():
+            square = self.board[node]
+            if square.is_set():
+                yield (node, square)
+
+    def iter_altered(self):
+        for node in self.solve_edges():
+            yield node
+        for node in self.solve_all():
+            yield node
+
+    def solve_edges(self):
+        for node, square in self.board.items():
+            x, y = node
+            if x == self.min_x:
+                square.delete_connection(3)
+            if y == self.min_y:
+                square.delete_connection(0)
+            if x == self.max_x:
+                square.delete_connection(1)
+            if y == self.max_y:
+                square.delete_connection(2)
+            if square.is_set():
+                yield node
+
+    def solve_all(self):
+        altered_something = True
+        while altered_something:
+            altered_something = False
+
+            num_solved = len(filter(PipeSegment.is_set, self.board.values()))
+            print 'num_solved = ' + repr(num_solved)
+            if num_solved == len(self.board):
+                print 'Solved them all!'
+                break
+
+            for node, square in self.board.items():
+                altered_this = self.solve_square(node, square)
+                altered_something |= altered_this
+                if altered_this:
+                    yield node
+
+    def solve_square(self, node, square):
+        modified = False
+        if square.is_set():
+            return modified
+        for n_node in square.get_neighbors():
+            try:
+                n_square = self.board[n_node]
+            except (KeyError, IndexError):
+                continue
+            modified |= square.learn_from_neighbor(n_square)
+        return modified
 
 
 class PipesBoard(cevent.CEvent):
@@ -268,6 +434,8 @@ class PipesBoard(cevent.CEvent):
         self.board = {}
         self.source = (0, 0)
 
+        self.ignored_solved = set()
+
         self._no_clicky = False
         self._is_running = False
         self.start_time = None
@@ -275,7 +443,7 @@ class PipesBoard(cevent.CEvent):
 
     def on_init(self):
         """Creates the pygame board."""
-        text_height = 64
+        text_height = PIC_SIZE * 2
         self.generate()
         print unicode(self)
         width = PIC_SIZE * len(self.xs)
@@ -290,6 +458,13 @@ class PipesBoard(cevent.CEvent):
             square.on_init()
         self.font = pygame.font.Font(None, 40)
         self.start_time = datetime.datetime.now()
+        Button.screen = self.screen
+
+        self.solver = Solver(self.board)
+        self.solved = self.solver.iter_solved()
+
+        self.solve_button = Button(self.solve_piece,
+                                   (len(self.xs) - 1, len(self.ys) + 1))
 
     def generate(self):
         """Generate a starting Pipes setup."""
@@ -398,15 +573,17 @@ class PipesBoard(cevent.CEvent):
 
     def on_lbutton_down(self, event):
         node = self._get_node(event.pos)
-        if node is None:
+        if node is not None:
+            self.board[node].rotate_right()
             return
-        self.board[node].rotate_right()
+        self.solve_button.handle_click(event.pos)
 
     def on_rbutton_down(self, event):
         node = self._get_node(event.pos)
-        if node is None:
+        if node is not None:
+            self.board[node].rotate_left()
             return
-        self.board[node].rotate_left()
+        self.solve_button.handle_click(event.pos)
 
     #### Loop ####
     def on_loop(self):
@@ -446,10 +623,13 @@ class PipesBoard(cevent.CEvent):
     #### Render ####
     def on_render(self):
         #self.screen.fill((1, 1, 1))
-        self.screen.fill((0, 0, 0))
+        self.screen.fill((54, 54, 54))
         for y in self.ys:
             for x in self.xs:
                 self.board[(x, y)].on_render()
+
+        self.solve_button.on_render()
+
         if self._no_clicky:
             self.display_win()
         self.display_time()
@@ -492,6 +672,38 @@ class PipesBoard(cevent.CEvent):
             self.on_render()
 
         self.on_cleanup()
+
+    #### Solving Stuff ####
+    def solve_piece(self):
+        print 'You cheater!'
+
+        for node in self.ignored_solved:
+            k_square = self.solver.board[node]
+            known_connection = k_square.get_connection()
+            b_square = self.board[node]
+            if known_connection != b_square.get_connection():
+                self.ignored_solved.remove(node)
+                b_square.connections = [known_connection]
+                b_square.cursor = 0
+                print 'setting %s' % (node, )
+                return
+
+        for node, k_square in self.solved:
+            known_connection = k_square.get_connection()
+            b_square = self.board[node]
+            if known_connection == b_square.get_connection():
+                self.ignored_solved.add(node)
+                continue
+
+            b_square.connections = [known_connection]
+            b_square.cursor = 0
+            print 'setting %s' % (node, )
+            return
+
+        print 'No pieces are known that are not already in place.'
+        return
+
+
 
 
 def launch_board(columns=16, rows=None):

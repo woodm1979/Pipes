@@ -5,10 +5,8 @@
 import datetime
 import optparse
 import os
-import os.path
 import pygame
 import random
-import sys
 from collections import deque
 
 import graphlib
@@ -102,15 +100,14 @@ class PipeSegment(object):
         Constructor for a pipe segment. seg_type can be:
         'end-cap', 'angle', 'straight', 'tee', or 'cross'.
         """
-        for seg_type, connections in self.initial_end_sets.items():
-            #print 'seg_type = ' + repr(seg_type)
-            #print 'connections = ' + repr(connections)
+        for connections in self.initial_end_sets.values():
             if initial_connections in connections:
+                self.connections = list(connections)
                 break
         else:
-            raise ValueError('Invalid initial_connections: %r' % initial_connections)
-        self.connections = list(connections)
-        self.cursor = connections.index(initial_connections)
+            msg = 'Invalid initial_connections: %r' % initial_connections
+            raise ValueError(msg)
+        self.cursor = self.connections.index(initial_connections)
         self.node = node
         x, y = node
         self.min_x = min(self.min_x, x)
@@ -156,13 +153,12 @@ class PipeSegment(object):
             self.cursor = len(self.connections) - 1
 
     def attached_to_source(self):
+        """Returns True if self is attached to the source."""
         return self.is_attached
 
     def is_set(self):
         """Returns True if the segment only has one possibility."""
         return 1 == len(self.connections)
-
-        return self._hightlighted
 
     def get_major(self):
         """f
@@ -254,7 +250,8 @@ class PipeSegment(object):
         return link_map.get((dx, dy))
 
     def is_connected_to(self, pos):
-        my_link, his_link = self.get_links(pos)
+        links = self.get_links(pos)
+        my_link = links[0]
         return my_link in self.get_connection()
 
     def delete_connection(self, bad_option):
@@ -301,7 +298,6 @@ class PipeSegment(object):
                 if my_link in my_connection:
                     self.connections.remove(my_connection)
 
-
         # If we didn't modify anything, we're done.
         if self.connections == old_connections:
             return False
@@ -332,13 +328,13 @@ class Button(object):
         self.screen.blit(tile, (PIC_SIZE * x, PIC_SIZE * y))
 
     def handle_click(self, node):
-        if self._get_node(node) == self.node:
+        if self.pos_in_button(node):
             self.press()
 
-    def _get_node(self, pos):
+    def pos_in_button(self, pos):
         x, y = pos
         node = (x / PIC_SIZE, y / PIC_SIZE)
-        return node
+        return (node == self.node)
 
 
 class Solver(object):
@@ -398,12 +394,12 @@ class Solver(object):
                 break
 
             for node, square in self.board.items():
-                altered_this = self.solve_square(node, square)
+                altered_this = self.solve_square(square)
                 altered_something |= altered_this
                 if altered_this:
                     yield node
 
-    def solve_square(self, node, square):
+    def solve_square(self, square):
         modified = False
         if square.is_set():
             return modified
@@ -431,9 +427,15 @@ class PipesBoard(cevent.CEvent):
         self.xs = range(x)
         self.ys = range(y)
 
+        self.screen = None
+        self.solve_button = None
+        self.font = None
+
         self.board = {}
         self.source = (0, 0)
 
+        self.solver = None
+        self.solved = None
         self.ignored_solved = set()
 
         self._no_clicky = False
@@ -443,28 +445,32 @@ class PipesBoard(cevent.CEvent):
 
     def on_init(self):
         """Creates the pygame board."""
-        text_height = PIC_SIZE * 2
+
         self.generate()
         print unicode(self)
+
+        text_height = PIC_SIZE * 2
         width = PIC_SIZE * len(self.xs)
-        height = PIC_SIZE * len(self.ys)
-        height += text_height
-        size = width, height
+        height = PIC_SIZE * len(self.ys) + text_height
+
         pygame.init()
-        self.screen = pygame.display.set_mode(size)
+        self.screen = pygame.display.set_mode((width, height))
+        self.font = pygame.font.Font(None, 40)
+
         PipeSegment.screen = self.screen
+        Button.screen = self.screen
+
         self._is_running = True
+
         for square in self.board.values():
             square.on_init()
-        self.font = pygame.font.Font(None, 40)
-        self.start_time = datetime.datetime.now()
-        Button.screen = self.screen
 
         self.solver = Solver(self.board)
         self.solved = self.solver.iter_solved()
-
         self.solve_button = Button(self.solve_piece,
                                    (len(self.xs) - 1, len(self.ys) + 1))
+
+        self.start_time = datetime.datetime.now()
 
     def generate(self):
         """Generate a starting Pipes setup."""
@@ -479,8 +485,6 @@ class PipesBoard(cevent.CEvent):
 
         graph = graph.min_span_tree()
         for node, links in sorted(graph.nodes.items()):
-            #print 'node = ' + repr(node),
-            #print 'links = ' + repr(links.keys())
             connections = []
             sx, sy = node
             for rx, ry in links:
@@ -492,8 +496,6 @@ class PipesBoard(cevent.CEvent):
                     connections.append(2)
                 elif sx == rx + 1 and sy == ry:
                     connections.append(3)
-
-            #print 'connections = ' + repr(connections)
 
             self.board[node] = PipeSegment(frozenset(connections), node)
 
@@ -566,10 +568,7 @@ class PipesBoard(cevent.CEvent):
     def on_mouse_move(self, event):
         active_node = self._get_node(event.pos)
         for node, square in self.board.items():
-            if node == active_node:
-                square.is_highlighted = True
-            else:
-                square.is_highlighted = False
+            square.is_highlighted = (node == active_node)
 
     def on_lbutton_down(self, event):
         node = self._get_node(event.pos)
@@ -702,8 +701,6 @@ class PipesBoard(cevent.CEvent):
 
         print 'No pieces are known that are not already in place.'
         return
-
-
 
 
 def launch_board(columns=16, rows=None):

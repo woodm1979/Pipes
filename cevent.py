@@ -12,10 +12,10 @@ class CEvent(object):
     def on_event(self, event):
         pass
 
-    def on_inputFocus(self):
+    def on_input_focus(self):
         pass
 
-    def on_imputBlur(self):
+    def on_imput_blur(self):
         pass
 
     def on_key_down(self, event):

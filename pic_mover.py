@@ -24,16 +24,18 @@ for file_name in glob.glob('*.png'):
         0: [0],
         1: [1],
         2: [2, 3],
-        3: [4],
+        3: [2],
         4: [5],
         5: [6, 7],
+        6: [6, 7],
+        7: [6],
     }
 
     new_minor_dict = {
-        1: 3,
-        2: 4,
-        3: 1,
-        4: 2,
+        1: 1,
+        2: 2,
+        3: 3,
+        4: 4,
     }
 
     new_majors = new_majors_dict[major]
